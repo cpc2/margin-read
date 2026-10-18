@@ -312,7 +312,7 @@ describe("createOrchestrator — error paths", () => {
 
 describe("createOrchestrator — provider-specific queue", () => {
   it.each<LocalTranslationProviderId>(["openai-compatible", "anthropic-compatible"])(
-    "uses smaller batch/concurrency for %s runtimes",
+    "packs %s segments by tokens rather than a fixed count of three",
     async (provider) => {
       useRouter({ settings: { ...DEFAULT_SETTINGS, provider } });
 
@@ -332,8 +332,7 @@ describe("createOrchestrator — provider-specific queue", () => {
             msg.type === "TRANSLATE_BATCH"
         )
         .map((msg) => msg.segments.length);
-      expect(batches.length).toBeGreaterThanOrEqual(2);
-      expect(Math.max(...batches)).toBeLessThanOrEqual(3);
+      expect(batches).toEqual([5]);
     }
   );
 });
@@ -476,7 +475,7 @@ describe("createOrchestrator — viewport prioritisation", () => {
     });
   }
 
-  it("translates blocks across all three viewport priority bands", async () => {
+  it("translates only visible blocks by default", async () => {
     seedDocument(
       `<main>
         <p id="inview">${SAMPLE_PARAGRAPH}</p>
@@ -499,8 +498,9 @@ describe("createOrchestrator — viewport prioritisation", () => {
     await orchestrator.setEnabled(true);
 
     await vi.waitFor(() => {
-      expect(document.querySelectorAll(`p[${TRANSLATED_ATTR}="done"]`).length).toBe(3);
+      expect(document.querySelectorAll(`p[${TRANSLATED_ATTR}="done"]`).length).toBe(1);
     });
+    expect(document.getElementById("far")?.hasAttribute(TRANSLATED_ATTR)).toBe(false);
   });
 });
 
@@ -595,5 +595,115 @@ describe("createOrchestrator — debug state plumbing", () => {
       structuredOutput: "tool input_schema",
       extensionVersion: "0.3.2"
     });
+  });
+});
+
+describe("request generations and source revisions", () => {
+  it("applies streamed IDs only to their matching request and session", async () => {
+    let finish: ((value: unknown) => void) | undefined;
+    seedDocument(`<main><p>${SAMPLE_PARAGRAPH}</p></main>`);
+    useRouter({
+      settings: { ...DEFAULT_SETTINGS, debugMode: true },
+      translateBatch: () =>
+        new Promise((r) => {
+          finish = r;
+        })
+    });
+    const orchestrator = createTestOrchestrator();
+    await orchestrator.setEnabled(true);
+    const message = sendMessageMock.mock.calls
+      .map(([m]) => m)
+      .find((m) => m.type === "TRANSLATE_BATCH") as Extract<
+      RuntimeMessage,
+      { type: "TRANSLATE_BATCH" }
+    >;
+    const result = { id: message.segments[0].id, text: "Bonjour" };
+    orchestrator.acceptProgress("wrong", message.requestId!, [result]);
+    orchestrator.acceptProgress(message.sessionId!, "wrong", [result]);
+    expect(document.querySelector(`[${TRANSLATED_ATTR}="done"]`)).toBeNull();
+    orchestrator.acceptProgress(message.sessionId!, message.requestId!, [
+      { id: "unknown", text: "wrong" },
+      result
+    ]);
+    expect(document.querySelector(`.${TRANSLATION_CLASS}`)?.textContent).toBe("Bonjour");
+    expect(orchestrator.getDebugState().firstTranslationDurationMs).toBeDefined();
+    finish?.({ ok: true, results: [result], metrics: { requests: 1, cacheHits: 0 } });
+    await vi.waitFor(() => expect(orchestrator.getDebugState().requestCount).toBe(1));
+  });
+  it("ignores stale replies after the source changes and rescans character data", async () => {
+    let finish: ((value: unknown) => void) | undefined;
+    seedDocument(`<main><p>${SAMPLE_PARAGRAPH}</p></main>`);
+    useRouter({
+      translateBatch: () =>
+        new Promise((r) => {
+          finish = r;
+        })
+    });
+    const orchestrator = createTestOrchestrator();
+    await orchestrator.setEnabled(true);
+    const message = sendMessageMock.mock.calls
+      .map(([m]) => m)
+      .find((m) => m.type === "TRANSLATE_BATCH") as Extract<
+      RuntimeMessage,
+      { type: "TRANSLATE_BATCH" }
+    >;
+    document.querySelector("p")!.firstChild!.textContent = `${SAMPLE_PARAGRAPH} Changed source.`;
+    orchestrator.acceptProgress(message.sessionId!, message.requestId!, [
+      { id: message.segments[0].id, text: "Stale" }
+    ]);
+    expect(document.querySelector(`[${TRANSLATED_ATTR}="done"]`)).toBeNull();
+    useRouter();
+    finish?.({ ok: true, results: [{ id: message.segments[0].id, text: "Stale" }] });
+    await vi.waitFor(() =>
+      expect(document.querySelector(`.${TRANSLATION_CLASS}`)?.textContent).toContain(
+        "Changed source"
+      )
+    );
+    expect(document.querySelector(`.${TRANSLATION_CLASS}`)?.textContent).not.toContain("Stale");
+  });
+  it("keeps nested table translations out of the source snapshot", async () => {
+    seedDocument(
+      `<main><div class="prose"><table><tr><td>${SAMPLE_PARAGRAPH}</td><td>${SAMPLE_PARAGRAPH} second cell.</td></tr></table></div></main>`
+    );
+    const orchestrator = createTestOrchestrator();
+    await orchestrator.setEnabled(true);
+    await vi.waitFor(() =>
+      expect(document.querySelector("td")?.getAttribute(TRANSLATED_ATTR)).toBe("done")
+    );
+    await new Promise((r) => setTimeout(r, 180));
+    expect(sendMessageMock.mock.calls.filter(([m]) => m.type === "TRANSLATE_BATCH")).toHaveLength(
+      1
+    );
+  });
+  it("supports the whole page scope", async () => {
+    useRouter({ settings: { ...DEFAULT_SETTINGS, execution: { scope: "page" } } });
+    seedDocument(
+      `<main><p>${SAMPLE_PARAGRAPH}</p><p id="faraway">${SAMPLE_PARAGRAPH} far</p></main>`
+    );
+    Object.defineProperty(document.getElementById("faraway"), "getBoundingClientRect", {
+      value: () => ({ top: 10000, bottom: 10100 })
+    });
+    const orchestrator = createTestOrchestrator();
+    await orchestrator.setEnabled(true);
+    await vi.waitFor(() =>
+      expect(document.querySelectorAll(`p[${TRANSLATED_ATTR}="done"]`)).toHaveLength(2)
+    );
+  });
+  it("cancels on stop and ignores late failures", async () => {
+    let reject: ((reason: unknown) => void) | undefined;
+    seedDocument(`<main><p>${SAMPLE_PARAGRAPH}</p></main>`);
+    useRouter({
+      translateBatch: () =>
+        new Promise((_r, fail) => {
+          reject = fail;
+        })
+    });
+    const orchestrator = createTestOrchestrator();
+    await orchestrator.setEnabled(true);
+    await orchestrator.setEnabled(false);
+    reject?.(new Error("Late failure"));
+    await Promise.resolve();
+    expect(document.querySelector(`.${TRANSLATION_CLASS}`)).toBeNull();
+    expect(sendMessageMock.mock.calls.some(([m]) => m.type === "CANCEL_TRANSLATION")).toBe(true);
   });
 });

@@ -15,7 +15,8 @@ const CARRIED_V1_FIELDS = [
   "cacheMode",
   "debugMode",
   "openAICompatibleJsonMode",
-  "showFloatingButton"
+  "showFloatingButton",
+  "execution"
 ] as const satisfies readonly (keyof ExtensionSettingsCurrent)[];
 
 /**

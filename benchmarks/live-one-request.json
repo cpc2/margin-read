@@ -1,0 +1,50 @@
+{
+  "date": "2026-10-18",
+  "url": "https://en.wikipedia.org/wiki/Web_browser",
+  "model": "liquid/lfm-2.5-2.6b:free",
+  "targetLanguage": "French",
+  "maxOutputTokens": 8192,
+  "firstMs": 7781,
+  "completeMs": 11213,
+  "metrics": {
+    "debugMode": true,
+    "enabled": true,
+    "detectedBlocks": 100,
+    "enqueuedBlocks": 9,
+    "queueSize": 0,
+    "runningRequests": 0,
+    "pendingBlocks": 0,
+    "translatedBlocks": 9,
+    "errorBlocks": 0,
+    "providerConfig": {
+      "provider": "openai-compatible",
+      "providerName": "OpenAI Compatible",
+      "model": "liquid/lfm-2.5-2.6b:free",
+      "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+      "structuredOutput": "json_schema",
+      "extensionVersion": "0.3.7"
+    },
+    "startedAt": 1792353509950,
+    "lastScanAt": 1792353509979,
+    "sampleText": "Web browser",
+    "lastProviderRequestStartedAt": 1792353509984,
+    "firstTranslationDurationMs": 7708,
+    "viewportCompleteDurationMs": 11041,
+    "lastProviderRequestFinishedAt": 1792353521034,
+    "lastProviderDurationMs": 11050,
+    "requestCount": 1,
+    "cacheHits": 0
+  },
+  "requests": [
+    {
+      "count": 9,
+      "characters": 2527,
+      "stream": true
+    }
+  ],
+  "translatedSamples": [
+    "Navigateur web",
+    "D'après Wikipédia, l'encyclopédie libre",
+    "Logiciel utilisé pour accéder aux sites web"
+  ]
+}

@@ -127,6 +127,7 @@ describe("TranslationQueue", () => {
       { id: "a", priority: 0, distance: 0, value: "a" },
       { id: "b", priority: 1, distance: 0, value: "b" }
     ]);
+    await Promise.resolve();
     queue.clear();
 
     await waitForQueue();
@@ -213,6 +214,37 @@ describe("TranslationQueue", () => {
     await waitForQueue();
 
     expect(batches).toEqual([["a"], ["b"]]);
+  });
+
+  it("packs by tokens and releases a cancelled generation's concurrency", async () => {
+    let release: (() => void) | undefined;
+    const batches: string[][] = [];
+    const queue = new TranslationQueue<string>({
+      batchSize: 64,
+      concurrency: 1,
+      tokenBudget: 10,
+      itemTokens: (s) => s.length,
+      worker: async (items) => {
+        batches.push(items);
+        if (items[0] === "old")
+          await new Promise<void>((r) => {
+            release = r;
+          });
+      }
+    });
+    queue.enqueue([{ id: "old", priority: 0, distance: 0, value: "old" }]);
+    await Promise.resolve();
+    queue.clear();
+    queue.configure({ tokenBudget: 5 });
+    queue.enqueue([
+      { id: "new-2", priority: 0, distance: 0, value: "abc" },
+      { id: "new-10", priority: 0, distance: 0, value: "def" }
+    ]);
+    await waitForQueue();
+    expect(batches).toEqual([["old"], ["abc"], ["def"]]);
+    release?.();
+    await waitForQueue();
+    expect(queue.running).toBe(0);
   });
 });
 

@@ -70,6 +70,13 @@ async function loadTargetLanguage(): Promise<void> {
   }
 }
 
+export function syncYouTubeSettings(settings: Partial<ExtensionSettings>): void {
+  if (settings.targetLanguage) {
+    targetLanguage = settings.targetLanguage;
+    if (isYouTubePage()) updateControlState();
+  }
+}
+
 function installObservers(): void {
   observer?.disconnect();
   observer = new MutationObserver((mutations) => {

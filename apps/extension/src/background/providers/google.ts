@@ -10,9 +10,9 @@ import {
   buildTranslationPayload,
   getTranslationSchema,
   parseTranslations,
-  TRANSLATION_SYSTEM_PROMPT
+  buildSystemPrompt
 } from "./shared";
-import type { TranslationProvider } from "./types";
+import type { ProviderRequestOptions, TranslationProvider } from "./types";
 
 interface GeminiRequestBody {
   generationConfig: GenerationConfig;
@@ -34,7 +34,8 @@ export const googleProvider: TranslationProvider = {
 
 async function translateWithGoogle(
   segments: TextSegment[],
-  settings: ExtensionSettings
+  settings: ExtensionSettings,
+  options: ProviderRequestOptions = {}
 ): Promise<TranslationResult[]> {
   const endpoint = buildGenerateContentEndpoint(settings);
 
@@ -42,10 +43,11 @@ async function translateWithGoogle(
     generationConfig: {
       temperature: 0,
       responseMimeType: "application/json",
-      responseJsonSchema: getTranslationSchema()
+      responseJsonSchema: getTranslationSchema(segments),
+      ...(options.maxOutputTokens ? { maxOutputTokens: options.maxOutputTokens } : {})
     },
     systemInstruction: {
-      parts: [{ text: TRANSLATION_SYSTEM_PROMPT }]
+      parts: [{ text: buildSystemPrompt(settings) }]
     },
     contents: [
       {
@@ -58,7 +60,8 @@ async function translateWithGoogle(
   const response = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
+    signal: options.signal
   });
 
   await assertProviderResponse(response);

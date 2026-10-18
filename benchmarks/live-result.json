@@ -1,0 +1,86 @@
+{
+  "date": "2026-10-18",
+  "url": "https://en.wikipedia.org/wiki/Web_browser",
+  "model": "liquid/lfm-2.5-2.6b:free",
+  "targetLanguage": "French",
+  "maxOutputTokens": 8192,
+  "firstMs": 10381,
+  "completeMs": 15766,
+  "metrics": {
+    "debugMode": true,
+    "enabled": true,
+    "detectedBlocks": 100,
+    "enqueuedBlocks": 9,
+    "queueSize": 0,
+    "runningRequests": 0,
+    "pendingBlocks": 0,
+    "translatedBlocks": 9,
+    "errorBlocks": 0,
+    "providerConfig": {
+      "provider": "openai-compatible",
+      "providerName": "OpenAI Compatible",
+      "model": "liquid/lfm-2.5-2.6b:free",
+      "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+      "structuredOutput": "json_schema",
+      "extensionVersion": "0.3.7"
+    },
+    "startedAt": 1792353740077,
+    "lastScanAt": 1792353740121,
+    "sampleText": "Web browser",
+    "lastProviderRequestStartedAt": 1792353740127,
+    "firstTranslationDurationMs": 10312,
+    "viewportCompleteDurationMs": 15709,
+    "lastProviderRequestFinishedAt": 1792353755832,
+    "lastProviderDurationMs": 15705,
+    "requestCount": 2,
+    "cacheHits": 0
+  },
+  "requests": [
+    {
+      "count": 9,
+      "characters": 2527,
+      "stream": true
+    },
+    {
+      "count": 2,
+      "characters": 37,
+      "stream": true
+    }
+  ],
+  "translatedSamples": [
+    "Navigateur Web",
+    "D'après Wikipédia, l'encyclopédie libre",
+    "Logiciel utilisé pour accéder aux sites web"
+  ],
+  "warmMs": 52,
+  "warmRequests": 0,
+  "warmMetrics": {
+    "debugMode": true,
+    "enabled": true,
+    "detectedBlocks": 99,
+    "enqueuedBlocks": 8,
+    "queueSize": 0,
+    "runningRequests": 0,
+    "pendingBlocks": 0,
+    "translatedBlocks": 8,
+    "errorBlocks": 0,
+    "providerConfig": {
+      "provider": "openai-compatible",
+      "providerName": "OpenAI Compatible",
+      "model": "liquid/lfm-2.5-2.6b:free",
+      "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+      "structuredOutput": "json_schema",
+      "extensionVersion": "0.3.7"
+    },
+    "startedAt": 1792353755930,
+    "lastScanAt": 1792353755955,
+    "sampleText": "Web browser",
+    "lastProviderRequestStartedAt": 1792353755958,
+    "firstTranslationDurationMs": 33,
+    "viewportCompleteDurationMs": 38,
+    "lastProviderRequestFinishedAt": 1792353755968,
+    "lastProviderDurationMs": 10,
+    "requestCount": 0,
+    "cacheHits": 8
+  }
+}

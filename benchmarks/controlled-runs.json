@@ -1,0 +1,56 @@
+[
+  {
+    "round": 1,
+    "baseline": true,
+    "firstMs": 444,
+    "completeMs": 1946,
+    "requests": 5,
+    "translated": 13,
+    "excludedTextSent": true
+  },
+  {
+    "round": 1,
+    "baseline": false,
+    "firstMs": 341,
+    "completeMs": 859,
+    "requests": 1,
+    "translated": 13,
+    "excludedTextSent": false
+  },
+  {
+    "round": 2,
+    "baseline": true,
+    "firstMs": 448,
+    "completeMs": 2465,
+    "requests": 5,
+    "translated": 13,
+    "excludedTextSent": true
+  },
+  {
+    "round": 2,
+    "baseline": false,
+    "firstMs": 368,
+    "completeMs": 888,
+    "requests": 1,
+    "translated": 13,
+    "excludedTextSent": false
+  },
+  {
+    "round": 3,
+    "baseline": true,
+    "firstMs": 445,
+    "completeMs": 1911,
+    "requests": 5,
+    "translated": 13,
+    "excludedTextSent": true
+  },
+  {
+    "round": 3,
+    "baseline": false,
+    "firstMs": 344,
+    "completeMs": 863,
+    "requests": 1,
+    "translated": 13,
+    "excludedTextSent": false
+  }
+]

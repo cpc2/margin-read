@@ -1,1 +1,1 @@
-export { initializeYouTubeControls } from "./controls";
+export { initializeYouTubeControls, syncYouTubeSettings } from "./controls";

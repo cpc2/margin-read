@@ -104,6 +104,61 @@ describe("openaiProvider.translate", () => {
 });
 
 describe("openaiCompatibleProvider.translate", () => {
+  it("streams OpenRouter results with strict IDs, output cap, and latency routing", async () => {
+    const content = '{"translations":[{"id":"a","text":"Bonjour"},{"id":"b","text":"Monde"}]}';
+    const { fetch: stub, calls } = stubFetch(
+      new Response(
+        `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\ndata: [DONE]\n\n`,
+        { headers: { "Content-Type": "text/event-stream" } }
+      )
+    );
+    vi.stubGlobal("fetch", stub);
+    const emit = vi.fn();
+    const controller = new AbortController();
+    const result = await openaiCompatibleProvider.translate(
+      segments,
+      makeSettings({
+        provider: "openai-compatible",
+        providerEndpoint: "https://openrouter.ai/api/v1/chat/completions",
+        openAICompatibleJsonMode: true,
+        targetLanguage: "French"
+      }),
+      { streaming: true, maxOutputTokens: 8192, signal: controller.signal, onTranslation: emit }
+    );
+    expect(result).toHaveLength(2);
+    expect(emit).toHaveBeenCalledTimes(2);
+    expect(calls[0].init.signal).toBe(controller.signal);
+    expect(calls[0].body).toMatchObject({
+      stream: true,
+      max_tokens: 8192,
+      provider: { sort: "latency" },
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          strict: true,
+          schema: {
+            properties: {
+              translations: {
+                minItems: 2,
+                maxItems: 2,
+                items: { properties: { id: { enum: ["a", "b"] } } }
+              }
+            }
+          }
+        }
+      }
+    });
+    expect(calls[0].body).not.toHaveProperty("reasoning");
+    expect((calls[0].body.messages as Array<{ content: string }>)[0].content).toContain('"French"');
+  });
+  it("preserves OpenRouter's API prefix when listing models", async () => {
+    const { fetch: stub, calls } = stubFetch(new Response('{"data":[{"id":"vendor/model:free"}]}'));
+    vi.stubGlobal("fetch", stub);
+    await openaiCompatibleProvider.listModels(
+      makeSettings({ providerEndpoint: "https://openrouter.ai/api/v1/chat/completions" })
+    );
+    expect(calls[0].url).toBe("https://openrouter.ai/api/v1/models");
+  });
   it("omits the Authorization header when api key is empty", async () => {
     const body = JSON.stringify({
       choices: [{ message: { content: '{"translations":[{"id":"a","text":"hola"}]}' } }]

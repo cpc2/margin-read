@@ -117,6 +117,27 @@ describe("provider settings", () => {
     );
   });
 
+  it("configures OpenRouter and accepts a manually entered model ID", () => {
+    const preset = document.querySelector<HTMLSelectElement>("#local-endpoint-preset")!;
+    preset.insertAdjacentHTML(
+      "beforeend",
+      '<option value="https://openrouter.ai/api/v1/chat/completions">OpenRouter</option>'
+    );
+    document.body.insertAdjacentHTML("beforeend", '<input id="custom-model">');
+    initializeProviderSettings({ readForm, setStatus: vi.fn() });
+    preset.value = "https://openrouter.ai/api/v1/chat/completions";
+    preset.dispatchEvent(new Event("change"));
+    expect(readForm()).toMatchObject({
+      provider: "openai-compatible",
+      providerEndpoint: preset.value,
+      model: "openrouter/free"
+    });
+    const input = document.querySelector<HTMLInputElement>("#custom-model")!;
+    input.value = "vendor/custom:free";
+    input.dispatchEvent(new Event("change"));
+    expect(readForm().model).toBe("vendor/custom:free");
+  });
+
   it("disables Fetch Models while loading and restores the button after success", async () => {
     const sendMessage = vi.mocked(chrome.runtime.sendMessage);
     sendMessage.mockResolvedValue({

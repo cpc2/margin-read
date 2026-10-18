@@ -3,6 +3,14 @@ import { normalizeDisplayStyle } from "../shared/displayStyle";
 import type { CacheMode, ExtensionSettings, TranslationProviderId } from "../shared/types";
 
 export function fillForm(settings: ExtensionSettings): void {
+  const execution = settings.execution ?? {};
+  setInputValue("executionScope", execution.scope ?? "viewport");
+  setInputValue("executionMode", execution.mode ?? "auto");
+  setInputValue("executionConcurrency", execution.concurrency?.toString() ?? "");
+  setInputValue("executionBudget", execution.inputTokenBudget?.toString() ?? "");
+  setInputValue("executionOutput", execution.maxOutputTokens?.toString() ?? "");
+  setInputValue("executionTimeout", execution.timeoutMs ? String(execution.timeoutMs / 1000) : "");
+  setCheckboxValue("executionStreaming", execution.streaming !== false);
   setInputValue("provider", settings.provider);
   setInputValue("providerEndpoint", settings.providerEndpoint);
   setInputValue("apiKey", settings.apiKey);
@@ -24,6 +32,30 @@ export function fillForm(settings: ExtensionSettings): void {
 export function readForm(): ExtensionSettings {
   return {
     ...DEFAULT_SETTINGS,
+    ...(document.querySelector('[name="executionScope"]')
+      ? {
+          execution: {
+            scope:
+              getInputValue("executionScope") === "page"
+                ? ("page" as const)
+                : ("viewport" as const),
+            mode: getInputValue("executionMode") as "auto" | "local" | "cloud",
+            ...(getInputValue("executionConcurrency")
+              ? { concurrency: Number(getInputValue("executionConcurrency")) }
+              : {}),
+            ...(getInputValue("executionBudget")
+              ? { inputTokenBudget: Number(getInputValue("executionBudget")) }
+              : {}),
+            ...(getInputValue("executionOutput")
+              ? { maxOutputTokens: Number(getInputValue("executionOutput")) }
+              : {}),
+            ...(getInputValue("executionTimeout")
+              ? { timeoutMs: Number(getInputValue("executionTimeout")) * 1000 }
+              : {}),
+            streaming: getCheckboxValue("executionStreaming")
+          }
+        }
+      : {}),
     provider: getInputValue("provider") as TranslationProviderId,
     providerEndpoint: getInputValue("providerEndpoint"),
     apiKey: getInputValue("apiKey"),
