@@ -37,6 +37,9 @@
                     llama.cpp server
                   </option>
                   <option value="http://localhost:8000/v1/chat/completions">omlx</option>
+                  <option value="https://openrouter.ai/api/v1/chat/completions">
+                    OpenRouter (free router)
+                  </option>
                 </select>
                 <span class="hint" data-i18n="endpointPresetHint"
                   >Presets switch the provider to OpenAI Compatible and fill the endpoint.</span
@@ -80,11 +83,69 @@
                   Fetch models
                 </button>
               </span>
+              <input
+                id="custom-model"
+                type="text"
+                placeholder="Or enter a model ID"
+                aria-label="Custom model ID"
+              />
               <span class="hint" data-i18n="modelHint"
                 >Fetch models from the selected provider, or keep the current provider
                 default.</span
               >
             </label>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h2>Translation speed</h2>
+          <div class="section-grid">
+            <label
+              ><span>Text to translate</span
+              ><select name="executionScope">
+                <option value="viewport">Visible text, then as you scroll</option>
+                <option value="page">Whole page (visible text first)</option>
+              </select></label
+            >
+            <label
+              ><span>Endpoint performance</span
+              ><select name="executionMode">
+                <option value="auto">Automatic (detect localhost)</option>
+                <option value="local">Local model</option>
+                <option value="cloud">Cloud service</option>
+              </select></label
+            >
+            <label
+              ><span>Concurrent requests</span
+              ><input
+                name="executionConcurrency"
+                type="number"
+                min="1"
+                max="6"
+                placeholder="Auto: local 1, cloud 3"
+            /></label>
+            <label
+              ><span>Input tokens per request (estimate)</span
+              ><input
+                name="executionBudget"
+                type="number"
+                min="256"
+                max="6000"
+                placeholder="Auto: local 1200, cloud 1800"
+            /></label>
+            <label
+              ><span>Maximum output tokens</span
+              ><input name="executionOutput" type="number" min="512" max="16384" placeholder="4096"
+            /></label>
+            <label
+              ><span>Request deadline (seconds)</span
+              ><input name="executionTimeout" type="number" min="1" max="120" placeholder="30"
+            /></label>
+            <label class="checkbox"
+              ><input name="executionStreaming" type="checkbox" checked /><span
+                >Show translations as they arrive (OpenAI compatible APIs)</span
+              ></label
+            >
           </div>
         </section>
 

@@ -279,10 +279,10 @@ describe("collectTextBlocks", () => {
     expect(collectTextBlocks(document, options)).toHaveLength(0);
   });
 
-  it("excludes very long semantic content", () => {
+  it("keeps long paragraphs for the request engine to split", () => {
     const document = createDocument(`<main><p>${"Long text ".repeat(500)}</p></main>`);
 
-    expect(collectTextBlocks(document, options)).toHaveLength(0);
+    expect(collectTextBlocks(document, options)).toHaveLength(1);
   });
 
   it("ignores nested legacy containers when choosing the fallback container", () => {

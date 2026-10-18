@@ -39,6 +39,27 @@ export interface ExtensionSettings {
   siteAdapters: SiteAdapterSettings;
   openAICompatibleJsonMode: boolean;
   showFloatingButton: boolean;
+  execution?: Partial<TranslationExecutionSettings>;
+}
+
+export interface TranslationExecutionSettings {
+  mode: "auto" | "local" | "cloud";
+  scope: "viewport" | "page";
+  concurrency: number;
+  inputTokenBudget: number;
+  maxOutputTokens: number;
+  timeoutMs: number;
+  retries: number;
+  streaming: boolean;
+}
+
+export interface TranslationMetrics {
+  requests: number;
+  cacheHits: number;
+  retries: number;
+  inputCharacters: number;
+  firstResultMs?: number;
+  totalMs: number;
 }
 
 export interface TextSegment {
@@ -61,12 +82,15 @@ export interface ProviderModel {
 export interface TranslateBatchRequest {
   type: "TRANSLATE_BATCH";
   segments: TextSegment[];
+  sessionId?: string;
+  requestId?: string;
 }
 
 export interface TranslateBatchResponse {
   ok: boolean;
   results?: TranslationResult[];
   error?: string;
+  metrics?: TranslationMetrics;
 }
 
 export interface PageDebugState {
@@ -93,10 +117,26 @@ export interface PageDebugState {
   errorBlocks: number;
   lastError?: string;
   sampleText?: string;
+  requestCount?: number;
+  cacheHits?: number;
+  startedAt?: number;
+  firstTranslationDurationMs?: number;
+  viewportCompleteDurationMs?: number;
 }
 
 export type RuntimeMessage =
   | TranslateBatchRequest
+  | { type: "CANCEL_TRANSLATION"; sessionId: string }
+  | {
+      type: "TRANSLATION_PROGRESS";
+      sessionId: string;
+      requestId: string;
+      results: TranslationResult[];
+    }
+  | { type: "SET_FLOATING_BUTTON"; enabled: boolean }
+  | { type: "GET_FLOATING_POSITION" }
+  | { type: "SET_FLOATING_POSITION"; position: number }
+  | { type: "SETTINGS_UPDATED"; settings: Partial<ExtensionSettings> }
   | { type: "GET_SETTINGS" }
   | { type: "LIST_MODELS"; settings: ExtensionSettings }
   | { type: "TOGGLE_TRANSLATION"; enabled?: boolean }

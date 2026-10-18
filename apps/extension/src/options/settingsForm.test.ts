@@ -47,4 +47,34 @@ describe("settings form", () => {
     expect(document.querySelector<HTMLSelectElement>('[name="cacheMode"]')?.value).toBe("disabled");
     expect(readForm().cacheMode).toBe("disabled");
   });
+
+  it("round trips execution overrides and keeps auto values empty", () => {
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      `<select name="executionScope"><option>viewport</option><option>page</option></select><select name="executionMode"><option>auto</option><option>cloud</option></select><input name="executionConcurrency"><input name="executionBudget"><input name="executionOutput"><input name="executionTimeout"><input name="executionStreaming" type="checkbox">`
+    );
+    fillForm({
+      ...DEFAULT_SETTINGS,
+      execution: {
+        scope: "page",
+        mode: "cloud",
+        concurrency: 2,
+        inputTokenBudget: 1000,
+        maxOutputTokens: 8192,
+        timeoutMs: 15000,
+        streaming: false
+      }
+    });
+    expect(readForm().execution).toEqual({
+      scope: "page",
+      mode: "cloud",
+      concurrency: 2,
+      inputTokenBudget: 1000,
+      maxOutputTokens: 8192,
+      timeoutMs: 15000,
+      streaming: false
+    });
+    fillForm(DEFAULT_SETTINGS);
+    expect(readForm().execution).toEqual({ scope: "viewport", mode: "auto", streaming: true });
+  });
 });

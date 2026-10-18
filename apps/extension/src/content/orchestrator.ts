@@ -1,16 +1,19 @@
-import { isLocalTranslationProvider } from "../shared/localProviders";
+import { estimateTokens, getExecutionSettings } from "../shared/execution";
 import { normalizeText } from "../shared/text";
 import type {
   ExtensionSettings,
   PageDebugState,
   TranslationProviderId,
-  TranslationResult
+  TranslationResult,
+  TranslationExecutionSettings,
+  TranslateBatchResponse
 } from "../shared/types";
 import type { BlockCandidate } from "./blockCandidates";
 import { type TranslationDisplayStyle } from "./displayStyle";
 import { createIncludedBlockCandidates } from "./extraction/shared";
 import { collectSiteAdapterBlocks } from "./siteAdapters";
 import { collectBlockCandidates } from "./textBlocks";
+import { isNonReadingElement, isVisibleForReading } from "./readingVisibility";
 import { getTranslationLabel } from "../shared/translationLabel";
 import {
   BLOCK_ID_ATTR,
@@ -28,11 +31,6 @@ import {
 } from "./translationQueue";
 
 const MIN_TEXT_LENGTH = 24;
-const BATCH_SIZE = 6;
-const CONCURRENCY = 2;
-const LOCAL_BATCH_SIZE = 3;
-const LOCAL_CONCURRENCY = 1;
-const INITIAL_QUEUE_LIMIT = 80;
 const NEAR_VIEWPORT_MULTIPLIER = 1.5;
 const FLOATING_HOST_ATTR = "data-margin-floating-controls";
 const PROVIDER_DISPLAY_NAMES: Record<TranslationProviderId, string> = {
@@ -43,12 +41,6 @@ const PROVIDER_DISPLAY_NAMES: Record<TranslationProviderId, string> = {
   "anthropic-compatible": "Anthropic Compatible"
 };
 
-interface TranslationBatchResponse {
-  ok: boolean;
-  results?: TranslationResult[];
-  error?: string;
-}
-
 interface SettingsResponse {
   ok: boolean;
   settings?: Partial<ExtensionSettings>;
@@ -58,6 +50,7 @@ export interface ContentOrchestrator {
   setEnabled(nextEnabled: boolean): Promise<void>;
   isEnabled(): boolean;
   getDebugState(): PageDebugState;
+  acceptProgress(sessionId: string, requestId: string, results: TranslationResult[]): void;
 }
 
 export interface ContentOrchestratorOptions {
@@ -73,6 +66,12 @@ export function createOrchestrator(options: ContentOrchestratorOptions): Content
   let pending = false;
   let nextId = 1;
   let runId = 0;
+  let sessionId = "";
+  let nextRequest = 0;
+  let execution: TranslationExecutionSettings = getExecutionSettings({ providerEndpoint: "" });
+  const sourceText = new Map<string, string>();
+  const requests = new Map<string, Set<string>>();
+  const initialViewport = new Set<string>();
   let displayStyle: TranslationDisplayStyle = "balanced";
   let showTranslationLabel = false;
   let targetLanguage = "English";
@@ -88,8 +87,10 @@ export function createOrchestrator(options: ContentOrchestratorOptions): Content
   const blockMap = new Map<string, HTMLElement>();
   const candidateByElement = new WeakMap<HTMLElement, BlockCandidate>();
   const queue = new TranslationQueue<HTMLElement>({
-    batchSize: BATCH_SIZE,
-    concurrency: CONCURRENCY,
+    batchSize: 64,
+    concurrency: 3,
+    tokenBudget: execution.inputTokenBudget,
+    itemTokens: (element) => 32 + estimateTokens(readSourceText(element)),
     worker: translateBlocks
   });
   const renderer: TranslationRenderer = createTranslationRenderer({
@@ -99,7 +100,11 @@ export function createOrchestrator(options: ContentOrchestratorOptions): Content
     targetLanguage,
     blockMap,
     onRetry: (block) => {
-      void translateBlocks([block]);
+      block.querySelectorAll(`.${TRANSLATION_CLASS}`).forEach((node) => node.remove());
+      if (block.nextElementSibling?.classList.contains(TRANSLATION_CLASS))
+        block.nextElementSibling.remove();
+      const candidate = candidateByElement.get(block);
+      if (candidate) queue.enqueue([createQueueItem(candidate)]);
     }
   });
 
@@ -120,10 +125,13 @@ export function createOrchestrator(options: ContentOrchestratorOptions): Content
 
   async function startTranslation(): Promise<void> {
     runId += 1;
+    const startingRunId = runId;
+    sessionId = crypto.randomUUID();
     observer?.disconnect();
     observer = undefined;
     try {
       const response: SettingsResponse = await chrome.runtime.sendMessage({ type: "GET_SETTINGS" });
+      if (!enabled || runId !== startingRunId) return;
       displayStyle = response.settings?.displayStyle ?? "balanced";
       showTranslationLabel = response.settings?.showTranslationLabel ?? false;
       targetLanguage = response.settings?.targetLanguage ?? targetLanguage;
@@ -141,13 +149,26 @@ export function createOrchestrator(options: ContentOrchestratorOptions): Content
       xSkipNativeTranslatedPosts = xConfig?.skipNativeTranslated ?? true;
       debugState = {
         ...createDebugState(),
+        startedAt: Date.now(),
         debugMode,
         enabled
       };
-      configureTranslationQueue(selectedProvider);
+      execution = getExecutionSettings({
+        providerEndpoint: response.settings?.providerEndpoint ?? "",
+        execution: response.settings?.execution
+      });
+      queue.configure({
+        batchSize: 64,
+        concurrency: execution.concurrency,
+        tokenBudget: Math.min(
+          execution.inputTokenBudget,
+          Math.floor(execution.maxOutputTokens / 2) - 96
+        )
+      });
       startViewportObserver();
       scanAndQueue();
     } catch (error: unknown) {
+      if (!enabled || runId !== startingRunId) return;
       recordError(error instanceof Error ? error.message : "Could not load extension settings.");
     }
     observer = new MutationObserver((mutations) => {
@@ -161,13 +182,16 @@ export function createOrchestrator(options: ContentOrchestratorOptions): Content
       window.setTimeout(() => {
         pending = false;
         scanAndQueue();
-      }, 600);
+      }, 120);
     });
-    observer.observe(document.body, { childList: true, subtree: true });
+    observer.observe(document.body, { childList: true, characterData: true, subtree: true });
   }
 
   function stopTranslation(): void {
     runId += 1;
+    void chrome.runtime
+      .sendMessage({ type: "CANCEL_TRANSLATION", sessionId })
+      .catch(() => undefined);
     queue.clear();
     observer?.disconnect();
     observer = undefined;
@@ -180,6 +204,9 @@ export function createOrchestrator(options: ContentOrchestratorOptions): Content
       node.removeAttribute(RENDER_STRATEGY_ATTR);
     });
     blockMap.clear();
+    sourceText.clear();
+    requests.clear();
+    initialViewport.clear();
     debugState = createDebugState();
     debugState.debugMode = debugMode;
     debugState.enabled = false;
@@ -188,6 +215,20 @@ export function createOrchestrator(options: ContentOrchestratorOptions): Content
   function scanAndQueue(): void {
     if (!enabled) {
       return;
+    }
+
+    // A SPA can reuse the same element for a different paragraph. Invalidate its
+    // old ID so neither a streamed nor a late final reply can overwrite new text.
+    for (const [id, element] of blockMap) {
+      if (element.isConnected && sourceText.get(id) === sourceFingerprint(element)) continue;
+      blockMap.delete(id);
+      sourceText.delete(id);
+      initialViewport.delete(id);
+      if (element.nextElementSibling?.classList.contains(TRANSLATION_CLASS))
+        element.nextElementSibling.remove();
+      element.querySelectorAll(`.${TRANSLATION_CLASS}`).forEach((node) => node.remove());
+      element.removeAttribute(TRANSLATED_ATTR);
+      element.removeAttribute(BLOCK_ID_ATTR);
     }
 
     const textBlockOptions = {
@@ -207,7 +248,10 @@ export function createOrchestrator(options: ContentOrchestratorOptions): Content
     const initialQueueItems = candidates
       .map(createQueueItem)
       .sort(compareQueueItems)
-      .slice(0, INITIAL_QUEUE_LIMIT);
+      .filter((item) => execution.scope === "page" || item.priority === 0);
+    if (debugState.viewportCompleteDurationMs === undefined) {
+      for (const item of initialQueueItems) if (item.priority === 0) initialViewport.add(item.id);
+    }
     debugState.lastScanAt = Date.now();
     debugState.detectedBlocks = candidates.length;
     debugState.enqueuedBlocks += initialQueueItems.length;
@@ -224,36 +268,53 @@ export function createOrchestrator(options: ContentOrchestratorOptions): Content
 
   async function translateBlocks(blocks: HTMLElement[]): Promise<void> {
     const activeRunId = runId;
-    const segments = blocks.map((element) => {
+    blocks = blocks.filter((block) => block.isConnected && !block.hasAttribute(TRANSLATED_ATTR));
+    if (!blocks.length || !enabled) return;
+    blocks.sort((a, b) =>
+      a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1
+    );
+    const requestId = String(++nextRequest);
+    const segments = blocks.map((element, index) => {
       const id = element.getAttribute(BLOCK_ID_ATTR) ?? `block-${nextId++}`;
       element.setAttribute(BLOCK_ID_ATTR, id);
       element.setAttribute(TRANSLATED_ATTR, "pending");
       blockMap.set(id, element);
+      const text = readSourceText(element);
+      sourceText.set(id, sourceFingerprint(element));
       return {
         id,
-        text: normalizeText(element.innerText),
-        contextBefore: getSiblingText(element, "previousElementSibling"),
-        contextAfter: getSiblingText(element, "nextElementSibling")
+        text,
+        ...(index === 0
+          ? { contextBefore: getSiblingText(element, "previousElementSibling") }
+          : {}),
+        ...(index === blocks.length - 1
+          ? { contextAfter: getSiblingText(element, "nextElementSibling") }
+          : {})
       };
     });
+    requests.set(requestId, new Set(segments.map((segment) => segment.id)));
 
     renderer.insertPendingState(blocks);
     updateDebugCounts();
 
-    let response: TranslationBatchResponse;
+    let response: TranslateBatchResponse;
     const requestStartedAt = Date.now();
     recordProviderRequestStarted(requestStartedAt);
     try {
       response = await chrome.runtime.sendMessage({
         type: "TRANSLATE_BATCH",
+        sessionId,
+        requestId,
         segments
       });
       recordProviderRequestFinished(requestStartedAt);
     } catch (error) {
+      requests.delete(requestId);
+      if (!enabled || activeRunId !== runId) return;
       recordProviderRequestFinished(requestStartedAt);
       const message = error instanceof Error ? error.message : "Provider request failed.";
       recordError(message);
-      renderer.insertErrorState(blocks, message);
+      renderer.insertErrorState(blocks.filter(isCurrentSource), message);
       updateDebugCounts();
       return;
     }
@@ -261,21 +322,24 @@ export function createOrchestrator(options: ContentOrchestratorOptions): Content
     if (!enabled || activeRunId !== runId) {
       return;
     }
+    requests.delete(requestId);
+    debugState.requestCount = (debugState.requestCount ?? 0) + (response.metrics?.requests ?? 1);
+    debugState.cacheHits = (debugState.cacheHits ?? 0) + (response.metrics?.cacheHits ?? 0);
 
     if (!response.ok || !response.results) {
       const message = response.error ?? "Translation failed.";
       recordError(message);
-      renderer.insertErrorState(blocks, message);
+      renderer.insertErrorState(blocks.filter(isCurrentSource), message);
       updateDebugCounts();
       return;
     }
 
-    renderer.applyTranslations(response.results);
+    applyCurrentTranslations(response.results);
     const translatedIds = new Set(response.results.map((result) => result.id));
     const missingBlocks = segments
       .filter((segment) => !translatedIds.has(segment.id))
       .map((segment) => blockMap.get(segment.id))
-      .filter((element): element is HTMLElement => Boolean(element));
+      .filter((element): element is HTMLElement => Boolean(element) && isCurrentSource(element!));
 
     if (missingBlocks.length > 0) {
       const message = "The provider did not return a translation for this block.";
@@ -307,7 +371,7 @@ export function createOrchestrator(options: ContentOrchestratorOptions): Content
       },
       {
         root: null,
-        rootMargin: "100% 0px"
+        rootMargin: "0px"
       }
     );
   }
@@ -325,12 +389,39 @@ export function createOrchestrator(options: ContentOrchestratorOptions): Content
     };
   }
 
-  function configureTranslationQueue(provider: TranslationProviderId): void {
-    queue.configure(
-      isLocalTranslationProvider(provider)
-        ? { batchSize: LOCAL_BATCH_SIZE, concurrency: LOCAL_CONCURRENCY }
-        : { batchSize: BATCH_SIZE, concurrency: CONCURRENCY }
-    );
+  function isCurrentSource(element: HTMLElement): boolean {
+    const id = element.getAttribute(BLOCK_ID_ATTR);
+    return Boolean(id && element.isConnected && sourceText.get(id) === sourceFingerprint(element));
+  }
+
+  function applyCurrentTranslations(results: TranslationResult[]): void {
+    const valid = results.filter((result) => {
+      const element = blockMap.get(result.id);
+      return element && isCurrentSource(element);
+    });
+    if (valid.length && debugState.firstTranslationDurationMs === undefined) {
+      debugState.firstTranslationDurationMs = Date.now() - (debugState.startedAt ?? Date.now());
+    }
+    renderer.applyTranslations(valid);
+    for (const result of valid) initialViewport.delete(result.id);
+    if (
+      valid.length &&
+      !initialViewport.size &&
+      debugState.viewportCompleteDurationMs === undefined
+    ) {
+      debugState.viewportCompleteDurationMs = Date.now() - (debugState.startedAt ?? Date.now());
+    }
+    updateDebugCounts();
+  }
+
+  function acceptProgress(
+    progressSession: string,
+    requestId: string,
+    results: TranslationResult[]
+  ): void {
+    if (!enabled || progressSession !== sessionId) return;
+    const expected = requests.get(requestId);
+    if (expected) applyCurrentTranslations(results.filter((result) => expected.has(result.id)));
   }
 
   function createDebugState(): PageDebugState {
@@ -372,7 +463,11 @@ export function createOrchestrator(options: ContentOrchestratorOptions): Content
     if (provider === "google") return "responseJsonSchema";
     if (provider === "openai") return "json_schema";
     if (provider === "anthropic" || provider === "anthropic-compatible") return "tool input_schema";
-    return settings?.openAICompatibleJsonMode ? "json_object" : "prompt only";
+    return settings?.openAICompatibleJsonMode
+      ? sanitizeEndpoint(settings.providerEndpoint).startsWith("https://openrouter.ai/")
+        ? "json_schema"
+        : "json_object"
+      : "prompt only";
   }
 
   function getDebugStateSnapshot(): PageDebugState {
@@ -420,7 +515,8 @@ export function createOrchestrator(options: ContentOrchestratorOptions): Content
   return {
     setEnabled,
     isEnabled: () => enabled,
-    getDebugState: getDebugStateSnapshot
+    getDebugState: getDebugStateSnapshot,
+    acceptProgress
   };
 }
 
@@ -477,7 +573,9 @@ function getViewportDistance(element: HTMLElement): number {
 }
 
 function isMarginMutation(mutation: MutationRecord): boolean {
-  if (mutation.target instanceof HTMLElement && isMarginManagedNode(mutation.target)) {
+  const target =
+    mutation.target instanceof HTMLElement ? mutation.target : mutation.target.parentElement;
+  if (target?.closest(`.${TRANSLATION_CLASS}, [${FLOATING_HOST_ATTR}]`)) {
     return true;
   }
 
@@ -493,9 +591,6 @@ function isMarginManagedNode(node: Node): boolean {
   return (
     node.classList.contains(TRANSLATION_CLASS) ||
     node.hasAttribute(FLOATING_HOST_ATTR) ||
-    node.hasAttribute(TRANSLATED_ATTR) ||
-    node.hasAttribute(BLOCK_ID_ATTR) ||
-    node.hasAttribute(RENDER_STRATEGY_ATTR) ||
     node.dataset.marginLegacyBlock === "true" ||
     node.dataset.marginBrSeparatedBlock === "true" ||
     node.dataset.marginInlineRunBlock === "true" ||
@@ -507,12 +602,29 @@ function getSiblingText(
   element: HTMLElement,
   key: "previousElementSibling" | "nextElementSibling"
 ): string | undefined {
-  const sibling = element[key];
+  let sibling = element[key];
+  while (sibling?.classList.contains(TRANSLATION_CLASS)) sibling = sibling[key];
   if (!(sibling instanceof HTMLElement)) {
     return undefined;
   }
-  const text = normalizeText(sibling.innerText);
-  return text.length > 0 ? text.slice(0, 280) : undefined;
+  if (isNonReadingElement(sibling, TRANSLATION_CLASS) || !isVisibleForReading(sibling))
+    return undefined;
+  const text = readSourceText(sibling);
+  return text.length > 0 ? text.slice(0, 80) : undefined;
+}
+
+function readSourceText(element: HTMLElement): string {
+  if (!element.querySelector(`.${TRANSLATION_CLASS}`))
+    return normalizeText(element.innerText ?? element.textContent ?? "");
+  return sourceFingerprint(element);
+}
+
+function sourceFingerprint(element: HTMLElement): string {
+  if (!element.querySelector(`.${TRANSLATION_CLASS}`))
+    return normalizeText(element.textContent ?? "");
+  const copy = element.cloneNode(true) as HTMLElement;
+  copy.querySelectorAll(`.${TRANSLATION_CLASS}`).forEach((node) => node.remove());
+  return normalizeText(copy.textContent ?? "");
 }
 
 function getSampleText(candidates: BlockCandidate[]): string | undefined {

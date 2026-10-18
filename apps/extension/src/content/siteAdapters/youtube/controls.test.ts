@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SETTINGS_KEY } from "../../../shared/defaults";
-import { initializeYouTubeControls, resetYouTubeControlsForTests } from "./controls";
+import {
+  initializeYouTubeControls,
+  resetYouTubeControlsForTests,
+  syncYouTubeSettings
+} from "./controls";
 
 const sendMessage = vi.fn();
 const addStorageListener = vi.fn();
@@ -63,6 +67,9 @@ describe("initializeYouTubeControls", () => {
     const button = host?.shadowRoot?.querySelector<HTMLButtonElement>(".margin-youtube__button");
     expect(button?.getAttribute("aria-label")).toBe("Margin captions into Japanese");
     expect(button?.getAttribute("aria-pressed")).toBe("false");
+    syncYouTubeSettings({ targetLanguage: "German" });
+    syncYouTubeSettings({});
+    expect(button?.getAttribute("aria-label")).toBe("Margin captions into German");
   });
 
   it("does not inject outside YouTube watch pages", () => {

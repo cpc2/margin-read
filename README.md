@@ -1,5 +1,9 @@
 # Margin Read
 
+This fork adds a viewport translation engine with token budgets, streamed JSON results,
+cancellation, and targeted retries. See [FORK.md](FORK.md) for installation, exact request
+formats, configuration, and the measured results in [BENCHMARK.md](BENCHMARK.md).
+
 [![CI](https://github.com/withmargin/margin-read/actions/workflows/ci.yml/badge.svg)](https://github.com/withmargin/margin-read/actions/workflows/ci.yml)
 [![Release](https://github.com/withmargin/margin-read/actions/workflows/release.yml/badge.svg)](https://github.com/withmargin/margin-read/actions/workflows/release.yml)
 [![CodeQL](https://github.com/withmargin/margin-read/actions/workflows/codeql.yml/badge.svg)](https://github.com/withmargin/margin-read/actions/workflows/codeql.yml)

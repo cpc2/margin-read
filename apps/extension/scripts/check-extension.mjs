@@ -1,8 +1,9 @@
 import { access, readFile, readdir, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = new URL("..", import.meta.url).pathname;
+const root = fileURLToPath(new URL("..", import.meta.url));
 const manifest = JSON.parse(await readFile(join(root, "manifest.json"), "utf8"));
 const failures = [];
 
@@ -34,7 +35,7 @@ assert(
 
 const files = await listProjectFiles(root);
 for (const file of files) {
-  if (file.endsWith("scripts/check-extension.mjs")) {
+  if (file === fileURLToPath(import.meta.url)) {
     continue;
   }
 

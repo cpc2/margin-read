@@ -1,12 +1,8 @@
 import "./content.css";
-import { SETTINGS_KEY } from "../shared/defaults";
 import type { ExtensionSettings, RuntimeMessage } from "../shared/types";
-import { getSettings, saveSettings } from "../shared/storage";
 import { installFloatingButton, type FloatingButtonHandle } from "./floatingButton";
 import { createOrchestrator } from "./orchestrator";
-import { initializeYouTubeControls } from "./siteAdapters/youtube";
-
-const FLOATING_POSITION_KEY = "margin.floatingButton.positionRatio";
+import { initializeYouTubeControls, syncYouTubeSettings } from "./siteAdapters/youtube";
 
 interface SettingsResponse {
   ok: boolean;
@@ -22,6 +18,15 @@ const orchestrator = createOrchestrator({
 });
 
 chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResponse) => {
+  if (message.type === "TRANSLATION_PROGRESS") {
+    orchestrator.acceptProgress(message.sessionId, message.requestId, message.results);
+    return;
+  }
+  if (message.type === "SETTINGS_UPDATED") {
+    floatingButton?.syncFromSettings(message.settings);
+    syncYouTubeSettings(message.settings);
+    return;
+  }
   if (message.type === "TOGGLE_TRANSLATION") {
     const next = typeof message.enabled === "boolean" ? message.enabled : !orchestrator.isEnabled();
     void orchestrator.setEnabled(next).finally(() => {
@@ -46,16 +51,8 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResp
 
 void initializeFloatingButton();
 initializeYouTubeControls();
-
-chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName !== "local") {
-    return;
-  }
-
-  const nextSettings = changes[SETTINGS_KEY]?.newValue as Partial<ExtensionSettings> | undefined;
-  if (nextSettings) {
-    floatingButton?.syncFromSettings(nextSettings);
-  }
+window.addEventListener("pagehide", () => {
+  if (orchestrator.isEnabled()) void orchestrator.setEnabled(false);
 });
 
 async function initializeFloatingButton(): Promise<void> {
@@ -72,7 +69,7 @@ async function initializeFloatingButton(): Promise<void> {
     initialPositionRatio: await readFloatingPositionRatio(),
     onToggle: () => orchestrator.setEnabled(!orchestrator.isEnabled()),
     onPositionChange: (ratio) => {
-      void chrome.storage.local.set({ [FLOATING_POSITION_KEY]: ratio });
+      void chrome.runtime.sendMessage({ type: "SET_FLOATING_POSITION", position: ratio });
     },
     onClose: () => void disableFloatingButton()
   });
@@ -91,8 +88,7 @@ async function initializeFloatingButton(): Promise<void> {
 // Close (×) turns the feature off globally and persists it, so the options page reflects it.
 async function disableFloatingButton(): Promise<void> {
   try {
-    const settings = await getSettings();
-    await saveSettings({ ...settings, showFloatingButton: false });
+    await chrome.runtime.sendMessage({ type: "SET_FLOATING_BUTTON", enabled: false });
   } catch {
     // Storage unavailable (e.g. during teardown); the host is already removed.
   }
@@ -100,8 +96,10 @@ async function disableFloatingButton(): Promise<void> {
 
 async function readFloatingPositionRatio(): Promise<number | null> {
   try {
-    const stored = await chrome.storage.local.get(FLOATING_POSITION_KEY);
-    const value: unknown = stored[FLOATING_POSITION_KEY];
+    const response: { position?: unknown } = await chrome.runtime.sendMessage({
+      type: "GET_FLOATING_POSITION"
+    });
+    const value: unknown = response.position;
     return typeof value === "number" ? value : null;
   } catch {
     return null;

@@ -16,10 +16,10 @@ import {
   buildV1ModelsEndpoint,
   getTranslationSchema,
   parseTranslations,
-  TRANSLATION_SYSTEM_PROMPT,
+  buildSystemPrompt,
   validateTranslations
 } from "./shared";
-import type { TranslationProvider } from "./types";
+import type { ProviderRequestOptions, TranslationProvider } from "./types";
 
 const ANTHROPIC_VERSION = "2023-06-01";
 const TRANSLATION_TOOL_NAME = "return_translations";
@@ -42,18 +42,19 @@ export const anthropicCompatibleProvider: TranslationProvider = {
 
 async function translateWithAnthropic(
   segments: TextSegment[],
-  settings: ExtensionSettings
+  settings: ExtensionSettings,
+  options: ProviderRequestOptions = {}
 ): Promise<TranslationResult[]> {
   const body: AnthropicRequestBody = {
     model: settings.model,
-    max_tokens: 4096,
+    max_tokens: options.maxOutputTokens ?? 4096,
     temperature: 0,
-    system: TRANSLATION_SYSTEM_PROMPT,
+    system: buildSystemPrompt(settings),
     tools: [
       {
         name: TRANSLATION_TOOL_NAME,
         description: "Return translated text segments for bilingual webpage reading.",
-        input_schema: getTranslationSchema() as Tool.InputSchema
+        input_schema: getTranslationSchema(segments) as Tool.InputSchema
       }
     ],
     messages: [{ role: "user" as const, content: buildTranslationPayload(segments, settings) }]
@@ -66,7 +67,8 @@ async function translateWithAnthropic(
   const response = await fetch(settings.providerEndpoint, {
     method: "POST",
     headers: buildAnthropicHeaders(settings),
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
+    signal: options.signal
   });
 
   await assertProviderResponse(response);

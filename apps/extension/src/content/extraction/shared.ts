@@ -15,7 +15,8 @@ import { matchesSelector } from "../dom";
 import { isNonReadingElement, isVisibleForReading } from "../readingVisibility";
 import type { TextBlockOptions } from "./types";
 
-export const MAX_TEXT_LENGTH = 4000;
+// Large paragraphs are split at sentence boundaries by the request engine.
+export const MAX_TEXT_LENGTH = 100000;
 export const BR_SEPARATED_SELECTOR = "p, td, font";
 
 // A CJK character is roughly a whole morpheme, so the Latin-tuned minimum (typically 24)

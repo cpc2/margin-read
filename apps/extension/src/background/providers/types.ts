@@ -8,6 +8,17 @@ import type {
 
 export interface TranslationProvider {
   readonly id: TranslationProviderId;
-  translate(segments: TextSegment[], settings: ExtensionSettings): Promise<TranslationResult[]>;
+  translate(
+    segments: TextSegment[],
+    settings: ExtensionSettings,
+    options?: ProviderRequestOptions
+  ): Promise<TranslationResult[]>;
   listModels(settings: ExtensionSettings): Promise<ProviderModel[]>;
+}
+
+export interface ProviderRequestOptions {
+  signal?: AbortSignal;
+  maxOutputTokens?: number;
+  streaming?: boolean;
+  onTranslation?: (result: TranslationResult) => void;
 }

@@ -15,9 +15,10 @@ import {
   buildV1ModelsEndpoint,
   getTranslationSchema,
   parseTranslations,
-  TRANSLATION_SYSTEM_PROMPT
+  buildSystemPrompt
 } from "./shared";
-import type { TranslationProvider } from "./types";
+import type { ProviderRequestOptions, TranslationProvider } from "./types";
+import { readOpenAIStream } from "./stream";
 
 const STRUCTURED_OUTPUT_NAME = "translations";
 
@@ -39,25 +40,36 @@ export const openaiCompatibleProvider: TranslationProvider = {
 
 async function translateWithOpenAI(
   segments: TextSegment[],
-  settings: ExtensionSettings
+  settings: ExtensionSettings,
+  options: ProviderRequestOptions = {}
 ): Promise<TranslationResult[]> {
   const body = {
     model: settings.model,
     temperature: 0,
-    ...buildResponseFormat(settings),
+    ...(options.maxOutputTokens ? { max_tokens: options.maxOutputTokens } : {}),
+    ...(options.streaming ? { stream: true } : {}),
+    ...(new URL(settings.providerEndpoint).hostname === "openrouter.ai"
+      ? { provider: { sort: "latency" } }
+      : {}),
+    ...buildResponseFormat(settings, segments),
     messages: [
-      { role: "system", content: TRANSLATION_SYSTEM_PROMPT },
+      { role: "system", content: buildSystemPrompt(settings) },
       { role: "user", content: buildTranslationPayload(segments, settings) }
     ]
-  } satisfies OpenAIRequestBody;
+  };
 
   const response = await fetch(settings.providerEndpoint, {
     method: "POST",
     headers: buildOpenAIHeaders(settings),
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
+    signal: options.signal
   });
 
   await assertProviderResponse(response);
+
+  if (response.headers.get("content-type")?.includes("text/event-stream")) {
+    return readOpenAIStream(response, segments, options.onTranslation);
+  }
 
   const payload = (await response.json()) as Partial<OpenAIResponse>;
   const content = payload.choices?.[0]?.message?.content;
@@ -89,17 +101,24 @@ function buildOpenAIHeaders(settings: ExtensionSettings): Record<string, string>
   };
 }
 
-function buildResponseFormat(settings: ExtensionSettings): {
+function buildResponseFormat(
+  settings: ExtensionSettings,
+  segments: TextSegment[]
+): {
   response_format?: OpenAIRequestBody["response_format"];
 } {
-  if (settings.provider === "openai") {
+  if (
+    settings.provider === "openai" ||
+    (new URL(settings.providerEndpoint).hostname === "openrouter.ai" &&
+      settings.openAICompatibleJsonMode)
+  ) {
     return {
       response_format: {
         type: "json_schema",
         json_schema: {
           name: STRUCTURED_OUTPUT_NAME,
           strict: true,
-          schema: getTranslationSchema() as Record<string, unknown>
+          schema: getTranslationSchema(segments) as Record<string, unknown>
         }
       }
     };

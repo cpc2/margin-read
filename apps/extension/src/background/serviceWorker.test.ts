@@ -58,6 +58,11 @@ const fetchCalls: FetchCall[] = [];
 let fetchResponder: (url: string, init: RequestInit) => Response | Promise<Response> = () =>
   new Response("noop");
 let registeredListener: MessageListener | undefined;
+let storageListener:
+  | ((changes: Record<string, chrome.storage.StorageChange>, area: string) => void)
+  | undefined;
+const tabMessages = vi.fn<(tabId: number, message: unknown) => Promise<unknown>>();
+const queryTabs = vi.fn<() => Promise<chrome.tabs.Tab[]>>();
 
 async function loadModule(): Promise<ServiceWorkerModule> {
   vi.resetModules();
@@ -70,6 +75,9 @@ beforeEach(() => {
   fetchResponder = () => new Response("noop");
 
   registeredListener = undefined;
+  storageListener = undefined;
+  tabMessages.mockReset().mockResolvedValue(undefined);
+  queryTabs.mockReset().mockResolvedValue([{ id: 4 }, {}] as chrome.tabs.Tab[]);
   vi.stubGlobal("chrome", {
     runtime: {
       onMessage: {
@@ -88,7 +96,13 @@ beforeEach(() => {
       }
     },
     storage: {
+      onChanged: {
+        addListener: vi.fn((listener: NonNullable<typeof storageListener>) => {
+          storageListener = listener;
+        })
+      },
       local: {
+        setAccessLevel: vi.fn().mockResolvedValue(undefined),
         get: vi.fn((key: string | null) => {
           if (key === null) {
             return Promise.resolve(Object.fromEntries(storageStore));
@@ -108,7 +122,8 @@ beforeEach(() => {
           return Promise.resolve();
         })
       }
-    }
+    },
+    tabs: { query: queryTabs, sendMessage: tabMessages }
   });
 
   const fakeFetch = vi.fn((input: RequestInfo | URL, init: RequestInit = {}) => {
@@ -144,7 +159,7 @@ describe("handleMessage GET_SETTINGS", () => {
 
     expect(result.ok).toBe(true);
     expect(result.settings?.targetLanguage).toBe("繁體中文");
-    expect(result.settings?.apiKey).toBe("stored-key");
+    expect(result.settings).not.toHaveProperty("apiKey");
   });
 });
 
@@ -432,5 +447,119 @@ describe("handleMessage unknown messages", () => {
 
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/unknown/);
+  });
+});
+
+describe("worker page communication", () => {
+  it("stores floating controls through worker messages", async () => {
+    saveSettings({ apiKey: "private-key" });
+    const { handleMessage } = await loadModule();
+    expect(await handleMessage({ type: "GET_FLOATING_POSITION" })).toMatchObject({
+      position: null
+    });
+    await handleMessage({ type: "SET_FLOATING_POSITION", position: 1.5 });
+    expect(await handleMessage({ type: "GET_FLOATING_POSITION" })).toMatchObject({ position: 1 });
+    await handleMessage({ type: "SET_FLOATING_POSITION", position: NaN });
+    await handleMessage({ type: "SET_FLOATING_BUTTON", enabled: false });
+    expect(storageStore.get(SETTINGS_KEY)).toMatchObject({
+      apiKey: "private-key",
+      showFloatingButton: false
+    });
+  });
+  it("broadcasts public settings and tolerates missing tabs", async () => {
+    const { handleMessage } = await loadModule();
+    await handleMessage({ type: "GET_SETTINGS" });
+    storageListener?.({}, "local");
+    storageListener?.(
+      { [SETTINGS_KEY]: { newValue: { ...DEFAULT_SETTINGS, apiKey: "private-key" } } },
+      "sync"
+    );
+    expect(tabMessages).not.toHaveBeenCalled();
+    storageListener?.(
+      { [SETTINGS_KEY]: { newValue: { ...DEFAULT_SETTINGS, apiKey: "private-key" } } },
+      "local"
+    );
+    await vi.waitFor(() => expect(tabMessages).toHaveBeenCalled());
+    const message = tabMessages.mock.calls[0][1] as {
+      type: string;
+      settings: Partial<ExtensionSettings>;
+    };
+    expect(message.type).toBe("SETTINGS_UPDATED");
+    expect(message.settings).not.toHaveProperty("apiKey");
+    tabMessages.mockRejectedValueOnce(new Error("closed tab"));
+    storageListener?.({ [SETTINGS_KEY]: { newValue: DEFAULT_SETTINGS } }, "local");
+    await Promise.resolve();
+    queryTabs.mockRejectedValueOnce(new Error("unavailable"));
+    storageListener?.({ [SETTINGS_KEY]: { newValue: DEFAULT_SETTINGS } }, "local");
+    await Promise.resolve();
+  });
+  it("sends progress back only to the requesting tab", async () => {
+    saveSettings({ apiKey: "test", cacheMode: "disabled" });
+    fetchResponder = () =>
+      jsonResponse({
+        choices: [{ message: { content: '{"translations":[{"id":"a","text":"Bonjour"}]}' } }]
+      });
+    const { handleMessage } = await loadModule();
+    await handleMessage(
+      {
+        type: "TRANSLATE_BATCH",
+        sessionId: "session",
+        requestId: "r1",
+        segments: [{ id: "a", text: "Hello" }]
+      },
+      { tab: { id: 4 } as chrome.tabs.Tab }
+    );
+    expect(tabMessages).toHaveBeenCalledWith(4, {
+      type: "TRANSLATION_PROGRESS",
+      sessionId: "session",
+      requestId: "r1",
+      results: [{ id: "a", text: "Bonjour" }]
+    });
+    tabMessages.mockRejectedValue(new Error("closed"));
+    await handleMessage(
+      {
+        type: "TRANSLATE_BATCH",
+        sessionId: "session",
+        requestId: "r2",
+        segments: [{ id: "a", text: "Hello" }]
+      },
+      { tab: { id: 4 } as chrome.tabs.Tab }
+    );
+  });
+  it("cancels fetches in the matching tab and session", async () => {
+    saveSettings({ apiKey: "test" });
+    fetchResponder = (_url, init) =>
+      new Promise((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => reject(new Error("Cancelled")));
+      });
+    const { handleMessage } = await loadModule();
+    const sender = { tab: { id: 4 } as chrome.tabs.Tab };
+    const promise = handleMessage(
+      {
+        type: "TRANSLATE_BATCH",
+        sessionId: "session",
+        requestId: "r1",
+        segments: [{ id: "a", text: "Hello" }]
+      },
+      sender
+    );
+    const assertion = expect(promise).rejects.toThrow();
+    await vi.waitFor(() => expect(fetchCalls.length).toBe(1));
+    await handleMessage({ type: "CANCEL_TRANSLATION", sessionId: "other" }, sender);
+    expect(fetchCalls[0].init.signal?.aborted).toBe(false);
+    await handleMessage(
+      { type: "CANCEL_TRANSLATION", sessionId: "session" },
+      { tab: { id: 5 } as chrome.tabs.Tab }
+    );
+    expect(fetchCalls[0].init.signal?.aborted).toBe(false);
+    await handleMessage({ type: "CANCEL_TRANSLATION", sessionId: "session" }, sender);
+    await assertion;
+    expect(fetchCalls[0].init.signal?.aborted).toBe(true);
+    await expect(
+      handleMessage(
+        { type: "TRANSLATE_BATCH", sessionId: "session", segments: [{ id: "a", text: "Hello" }] },
+        sender
+      )
+    ).rejects.toThrow(/cancelled/);
   });
 });

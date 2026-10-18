@@ -28,8 +28,9 @@ export function initializeProviderSettings({ readForm, setStatus }: ProviderSett
     }
     setInputValue("provider", "openai-compatible");
     setInputValue("providerEndpoint", localEndpointPreset.value);
-    const nextModel =
-      getInputValue("model") === PROVIDER_DEFAULTS.openai.model
+    const nextModel = localEndpointPreset.value.includes("openrouter.ai")
+      ? "openrouter/free"
+      : getInputValue("model") === PROVIDER_DEFAULTS.openai.model
         ? PROVIDER_DEFAULTS["openai-compatible"].model
         : getInputValue("model");
     resetModelSelect(nextModel);
@@ -44,6 +45,10 @@ export function initializeProviderSettings({ readForm, setStatus }: ProviderSett
     if (modelSelect.value) {
       setInputValue("model", modelSelect.value);
     }
+  });
+  document.querySelector<HTMLInputElement>("#custom-model")?.addEventListener("change", (event) => {
+    const value = (event.target as HTMLInputElement).value.trim();
+    if (value) resetModelSelect(value);
   });
 
   updateProviderSections((providerInput?.value as TranslationProviderId | undefined) ?? "openai");
